@@ -33,3 +33,17 @@ TOTAL_BANDWIDTH_MHZ = 1000.0
 TOTAL_POWER_W = 20.0
 NUM_BEAMS = 16
 BEAM_WIDTH_DEG = 0.5  # Chùm tia rất hẹp, đặc trưng của Sub-THz
+
+# ============================================
+# Link Budget Parameters (for SNR calculation)
+# ============================================
+SAT_ANTENNA_GAIN_DB = 40.0      # (dBi) Độ lợi búp sóng chính của anten vệ tinh
+USER_ANTENNA_GAIN_DB = 10.0     # (dBi) Độ lợi anten của thiết bị người dùng
+# Công suất nhiễu nhiệt (Thermal Noise Power)
+# Công thức: N = k * T * B
+# k: Hằng số Boltzmann (1.38e-23 J/K)
+# T: Nhiệt độ hệ thống (thường lấy 290 Kelvin)
+# B: Băng thông (Hz)
+# Chúng ta sẽ tính giá trị này bằng code thay vì hardcode.
+SYSTEM_NOISE_TEMPERATURE_K = 290.0
+BOLTZMANN_CONSTANT = 1.38e-23
