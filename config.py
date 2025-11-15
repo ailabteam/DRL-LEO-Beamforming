@@ -47,3 +47,18 @@ USER_ANTENNA_GAIN_DB = 10.0     # (dBi) Độ lợi anten của thiết bị ng�
 # Chúng ta sẽ tính giá trị này bằng code thay vì hardcode.
 SYSTEM_NOISE_TEMPERATURE_K = 290.0
 BOLTZMANN_CONSTANT = 1.38e-23
+
+# config.py
+# ...
+
+# ============================================
+# QoS / Queue Parameters (for Scenario 3)
+# ============================================
+# Tốc độ dữ liệu đến trung bình cho mỗi user (Mbps)
+# Tổng tốc độ đến là 10 users * 4 Mbps = 40 Mbps. 
+# Thông lượng hệ thống tối đa khoảng ~36 Mbps/step * 0.1s = 3.6 Mbps.
+# Cần điều chỉnh lại.
+# Tốc độ dữ liệu đến trung bình cho mỗi user (Megabits PER SECOND)
+# Giả sử mỗi bước là 0.1s, vậy lượng data đến mỗi bước là ARRIVAL_RATE_MBPS * 0.1
+ARRIVAL_RATE_MBPS = 40.0 
+MAX_QUEUE_SIZE_MBITS = 50.0 # (Megabits) Kích thước tối đa của hàng đợi

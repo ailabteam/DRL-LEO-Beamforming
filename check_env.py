@@ -3,7 +3,8 @@ from stable_baselines3.common.env_checker import check_env
 from satellite_env import SatelliteEnv
 
 # Khởi tạo môi trường
-env = SatelliteEnv()
+#env = SatelliteEnv()
+env = SatelliteEnv(scenario="qos")
 
 # Chạy công cụ kiểm tra
 # Nếu không có lỗi nào được in ra, môi trường của bạn đã hợp lệ!
