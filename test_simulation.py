@@ -7,6 +7,8 @@ import config as cfg
 from satellite import Satellite
 from user import Users
 from channel import calculate_fspl_db  # <-- DÒNG MỚI: Import hàm tính FSPL
+from channel import calculate_fspl_db, calculate_elevation_angle, calculate_atmospheric_loss_db
+
 
 def main():
     print("--- Bắt đầu kịch bản mô phỏng TÍCH HỢP ---")
@@ -24,37 +26,46 @@ def main():
 
     # Chuẩn bị để lưu kết quả
     results = []
-
+    
     for step in range(total_steps):
         # Cập nhật vị trí vệ tinh
         leo_satellite.move(cfg.TIME_STEP_S)
         sat_pos = leo_satellite.get_position_km()
-
-        # --- LOGIC TÍNH TOÁN MỚI ---
-        # Tính khoảng cách từ vệ tinh đến TẤT CẢ người dùng cùng lúc
-        # Sử dụng broadcasting của numpy để tính toán hiệu quả
+        
+        # --- LOGIC TÍNH TOÁN NÂNG CẤP ---
         distances_to_users = np.linalg.norm(sat_pos - user_positions, axis=1)
-
-        # Tính FSPL đến TẤT CẢ người dùng
-        fspl_values_db = calculate_fspl_db(distances_to_users, cfg.CENTER_FREQUENCY_GHZ)
-        # ---------------------------
+        
+        # 1. Tính FSPL
+        fspl_db = calculate_fspl_db(distances_to_users, cfg.CENTER_FREQUENCY_GHZ)
+        
+        # 2. Tính góc ngẩng
+        elevation_angles = calculate_elevation_angle(sat_pos, user_positions)
+        
+        # 3. Tính suy hao khí quyển
+        atmos_loss_db = calculate_atmospheric_loss_db(elevation_angles)
+        
+        # 4. Tính tổng suy hao
+        total_loss_db = fspl_db + atmos_loss_db
+        # ------------------------------------
 
         # Lấy thông tin của người dùng đầu tiên (user 0) để in ra
         dist_to_user_0 = distances_to_users[0]
-        fspl_to_user_0 = fspl_values_db[0]
-
-        # Lưu kết quả của bước này
+        elevation_user_0 = elevation_angles[0]
+        total_loss_user_0 = total_loss_db[0]
+        
+        # Lưu kết quả của bước này (thêm các trường mới)
         results.append({
             "step": step,
             "sat_pos_x": sat_pos[0],
             "dist_user0": dist_to_user_0,
-            "fspl_user0": fspl_to_user_0
+            "elevation_user0": elevation_user_0,
+            "total_loss_user0": total_loss_user_0
         })
 
-        # In thông tin mỗi 100 bước để theo dõi
+        # In thông tin mỗi 100 bước
         if step % 100 == 0:
             print(f"Step {step:4d}: Sat_x={sat_pos[0]:.2f} km | "
-                  f"Dist_U0={dist_to_user_0:.2f} km | FSPL_U0={fspl_to_user_0:.2f} dB")
+                  f"Elev_U0={elevation_user_0:.2f} deg | Total_Loss_U0={total_loss_user_0:.2f} dB")
 
     print("\n--- Mô phỏng kết thúc ---")
     final_sat_pos = leo_satellite.get_position_km()
@@ -62,9 +73,9 @@ def main():
 
     # --- VẼ ĐỒ THỊ ---
     # Chúng ta sẽ thêm phần vẽ đồ thị ở đây trong bước tiếp theo
-    from plotter import plot_simulation_results
+    from plotter import plot_simulation_results_v2
     if results:  # Chỉ vẽ nếu list results có dữ liệu
-        plot_simulation_results(results)
+        plot_simulation_results_v2(results)
 
 
 if __name__ == "__main__":
