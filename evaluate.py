@@ -1,101 +1,130 @@
 # evaluate.py
+import os
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+import math
+import sys
 from stable_baselines3 import PPO
 
-from satellite_env import SatelliteEnv
+import config as cfg
+# Sửa đổi để import env có hỗ trợ đa kịch bản
+from satellite_env_multiscenario import SatelliteEnv
+
+def jains_fairness_index(throughputs):
+    # ... (hàm này giữ nguyên) ...
+    if np.sum(throughputs) == 0: return 0.0
+    sum_sq = np.sum(throughputs**2)
+    if sum_sq == 0: return 1.0
+    return (np.sum(throughputs)**2) / (len(throughputs) * sum_sq)
+
+# evaluate.py -> chỉ thay thế hàm evaluate_agent
 
 def evaluate_agent(env, model=None, strategy="drl"):
     """
-    Chạy một episode và trả về tổng reward.
-
-    Args:
-        env (gym.Env): Môi trường đã được khởi tạo.
-        model (BaseAlgorithm): Model DRL đã được huấn luyện (nếu có).
-        strategy (str): "drl", "random", or "greedy".
+    Chạy một episode và trả về các chỉ số hiệu năng.
     """
     obs, info = env.reset()
-    total_reward = 0
     done = False
+    user_throughputs = np.zeros(cfg.NUM_USERS)
 
     while not done:
+        # --- LOGIC CHỌN ACTION ĐÃ SỬA LỖI ---
+        action = None
         if strategy == "drl":
             action, _ = model.predict(obs, deterministic=True)
         elif strategy == "random":
             action = env.action_space.sample()
         elif strategy == "greedy":
-            # Lấy thông tin SNR từ môi trường
-            snr_db = info.get("snr_db", np.zeros(env.action_space.n))
-            action = np.argmax(snr_db) # Chọn user có SNR cao nhất
+            # Lấy SNR từ observation `obs` thay vì `info`
+            # State của chúng ta có cấu trúc: [sat_x, sat_y, snr_0, ..., snr_N-1, ...]
+            # Do đó, SNR bắt đầu từ chỉ số 2 và có N_USERS phần tử.
+            snr_db_from_obs = obs[2 : 2 + cfg.NUM_USERS]
+            action = np.argmax(snr_db_from_obs)
+        else:
+            raise ValueError(f"Chiến lược không xác định: {strategy}")
+        # -----------------------------------
 
         obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
+        
+        # --- LOGIC TÍNH THROUGHPUT ĐÃ SỬA LỖI ---
+        # `info` bây giờ chứa SNR cập nhật chính xác nhất cho bước vừa rồi
+        snr_db_current = info.get("snr_db")
+        if snr_db_current is None:
+            # Fallback nếu info không có snr_db (không nên xảy ra)
+            snr_db_current = obs[2 : 2 + cfg.NUM_USERS]
+            
+        selected_user_snr_linear = 10**(snr_db_current[action] / 10)
+        bandwidth_hz = cfg.TOTAL_BANDWIDTH_MHZ * 1e6
+        throughput_this_step = (bandwidth_hz * math.log2(1 + selected_user_snr_linear)) / 1e6 # Mbps
+        user_throughputs[action] += throughput_this_step
+        # ----------------------------------------
+        
         done = terminated or truncated
 
-    return total_reward
+    total_throughput = np.sum(user_throughputs)
+    fairness = jains_fairness_index(user_throughputs)
+    return total_throughput, fairness
 
-def main():
-    print("--- Bắt đầu quá trình Đánh giá ---")
 
-    # --- 1. Tải model đã huấn luyện ---
-    # Hãy đảm bảo đường dẫn này chính xác với file model của bạn
-    # Ví dụ: model_path = "logs/20251115_183000/ppo_satellite_model.zip"
-    # TẠM THỜI ĐỂ TRỐNG, BẠN SẼ ĐIỀN VÀO SAU
-    model_path = "logs/20251115_163013/ppo_satellite_model.zip"
+def run_evaluation(model_path, output_dir):
+    """Hàm chính để chạy và lưu kết quả đánh giá."""
+    print(f"--- Bắt đầu Đánh giá cho model: {model_path} ---")
+
+    scenario = os.path.basename(output_dir).replace('scenario_', '')
 
     try:
         model = PPO.load(model_path)
     except Exception as e:
         print(f"Lỗi khi tải model: {e}")
-        print("Vui lòng kiểm tra lại đường dẫn trong file evaluate.py")
         return
 
-    # --- 2. Khởi tạo môi trường ---
-    # Quan trọng: chúng ta sẽ dùng cùng một môi trường cho tất cả các agent
-    # để đảm bảo so sánh công bằng.
-    eval_env = SatelliteEnv()
-
-    # --- 3. Chạy đánh giá cho từng chiến lược ---
-    # Để đảm bảo các agent đối mặt với cùng kịch bản (vị trí user),
-    # chúng ta sẽ reset môi trường với cùng một seed trước mỗi lần chạy.
+    eval_env = SatelliteEnv(scenario=scenario)
     common_seed = 42
 
-    print("\nĐánh giá DRL Agent (PPO)...")
-    eval_env.reset(seed=common_seed)
-    drl_reward = evaluate_agent(eval_env, model, strategy="drl")
+    # Chạy các chiến lược
+    results = {}
+    strategies = {"DRL (PPO)": model, "Random": None, "Greedy (Max-SNR)": None}
+    for name, agent_model in strategies.items():
+        print(f"Đánh giá {name}...")
+        eval_env.reset(seed=common_seed)
+        strategy_type = "drl" if name == "DRL (PPO)" else ("random" if name == "Random" else "greedy")
+        throughput, fairness = evaluate_agent(eval_env, agent_model, strategy=strategy_type)
+        results[name] = {"Total Throughput (Mbps)": throughput, "Jain's Fairness Index": fairness}
 
-    print("Đánh giá Random Agent...")
-    eval_env.reset(seed=common_seed)
-    random_reward = evaluate_agent(eval_env, strategy="random")
-
-    print("Đánh giá Greedy (Max-SNR) Agent...")
-    eval_env.reset(seed=common_seed)
-    greedy_reward = evaluate_agent(eval_env, strategy="greedy")
-
-    # --- 4. In và Trực quan hóa kết quả ---
+    # --- Lưu kết quả ---
+    # 1. Dạng số (CSV)
+    df = pd.DataFrame.from_dict(results, orient='index')
+    csv_path = os.path.join(output_dir, "evaluation_data.csv")
+    df.to_csv(csv_path)
     print("\n--- Kết quả Đánh giá ---")
-    print(f"Tổng reward của Random Agent:   {random_reward:.2f} Mbps")
-    print(f"Tổng reward của Greedy Agent:   {greedy_reward:.2f} Mbps")
-    print(f"Tổng reward của DRL Agent:      {drl_reward:.2f} Mbps")
+    print(df)
+    print(f"\nĐã lưu dữ liệu dạng bảng vào: {csv_path}")
 
-    # Vẽ đồ thị cột
-    strategies = ['Random', 'Greedy (Max-SNR)', 'DRL (PPO)']
-    rewards = [random_reward, greedy_reward, drl_reward]
-
-    plt.figure(figsize=(10, 6))
-    bars = plt.bar(strategies, rewards, color=['lightcoral', 'gold', 'lightgreen'])
-    plt.ylabel('Total Reward (Cumulative Mbps over Episode)')
-    plt.title('Performance Comparison of Different Agents')
-    plt.xticks(rotation=7)
-
-    # Thêm giá trị lên trên mỗi cột
-    for bar in bars:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2.0, yval, f'{yval:.2f}', va='bottom', ha='center')
-
-    plt.tight_layout()
-    plt.savefig("evaluation_comparison.png", dpi=600)
-    print("\nĐã lưu đồ thị so sánh vào file: evaluation_comparison.png")
+    # 2. Dạng đồ thị
+    fig_path = os.path.join(output_dir, "evaluation_comparison.png")
+    df.plot(kind='bar', subplots=True, figsize=(15, 6), layout=(1, 2), legend=False, rot=0)
+    plt.suptitle(f'Performance Comparison - Scenario: {scenario.upper()}', fontsize=16)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(fig_path, dpi=600)
+    print(f"Đã lưu đồ thị so sánh vào: {fig_path}")
 
 if __name__ == "__main__":
-    main()
+    # Lấy đường dẫn model từ lần chạy huấn luyện gần nhất
+    # Đây là phần cần tự động hóa hoặc chỉ định thủ công
+    # Ví dụ:
+    scenario_to_eval = "baseline"
+    result_dir = os.path.join("results", f"scenario_{scenario_to_eval}")
+
+    # Tìm file model .zip mới nhất trong thư mục log
+    try:
+        log_dirs = [d for d in os.listdir(result_dir) if os.path.isdir(os.path.join(result_dir, d))]
+        latest_log_dir = sorted(log_dirs)[-1]
+        model_files = [f for f in os.listdir(os.path.join(result_dir, latest_log_dir)) if f.endswith('.zip')]
+        latest_model_path = os.path.join(result_dir, latest_log_dir, model_files[0])
+
+        run_evaluation(latest_model_path, result_dir)
+
+    except (IndexError, FileNotFoundError) as e:
+        print(f"Lỗi: Không tìm thấy model để đánh giá trong thư mục '{result_dir}'.")
+        print("Hãy chạy train.py trước.")
