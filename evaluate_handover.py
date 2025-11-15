@@ -7,15 +7,66 @@ import math
 from stable_baselines3 import PPO
 
 import config as cfg
+# Đảm bảo import đúng file môi trường hỗ trợ đa kịch bản
 from satellite_env import SatelliteEnv 
 
-# --- HÀM jains_fairness_index và evaluate_agent giữ nguyên như phiên bản trước ---
-# (Bạn có thể copy-paste chúng vào đây)
 def jains_fairness_index(throughputs):
-    # ... (code giữ nguyên)
+    """
+    Tính chỉ số công bằng Jain's Fairness Index.
+    """
+    if np.sum(throughputs) == 0:
+        return 0.0
+    
+    sum_of_throughputs = np.sum(throughputs)
+    sum_of_squared_throughputs = np.sum(throughputs**2)
+    
+    # Thêm kiểm tra để tránh chia cho 0 nếu tất cả throughput là 0
+    if sum_of_squared_throughputs == 0:
+        return 1.0
+
+    fairness_index = (sum_of_throughputs**2) / (len(throughputs) * sum_of_squared_throughputs)
+    return fairness_index
+
 def evaluate_agent(env, model=None, strategy="drl"):
-    # ... (code giữ nguyên)
-# ---
+    """
+    Chạy một episode và trả về các chỉ số hiệu năng (Thông lượng và Công bằng).
+    """
+    obs, info = env.reset()
+    done = False
+    user_throughputs = np.zeros(cfg.NUM_USERS)
+
+    while not done:
+        # --- Logic chọn action ---
+        action = None
+        if strategy == "drl":
+            action, _ = model.predict(obs, deterministic=True)
+        elif strategy == "random":
+            action = env.action_space.sample()
+        elif strategy == "greedy":
+            # Trích xuất SNR từ observation
+            snr_db_from_obs = obs[2 : 2 + cfg.NUM_USERS]
+            action = np.argmax(snr_db_from_obs)
+        else:
+            raise ValueError(f"Chiến lược không xác định: {strategy}")
+
+        obs, reward, terminated, truncated, info = env.step(action)
+        
+        # --- Tính throughput thực tế của bước này ---
+        snr_db_current = info.get("snr_db")
+        if snr_db_current is None:
+            # Fallback (không nên xảy ra)
+            snr_db_current = obs[2 : 2 + cfg.NUM_USERS]
+            
+        selected_user_snr_linear = 10**(snr_db_current[action] / 10)
+        bandwidth_hz = cfg.TOTAL_BANDWIDTH_MHZ * 1e6
+        throughput_this_step = (bandwidth_hz * math.log2(1 + selected_user_snr_linear)) / 1e6 # Mbps
+        user_throughputs[action] += throughput_this_step
+        
+        done = terminated or truncated
+
+    total_throughput = np.sum(user_throughputs)
+    fairness = jains_fairness_index(user_throughputs)
+    return total_throughput, fairness
 
 def run_evaluation(model_path, output_dir):
     """Hàm chính để chạy và lưu kết quả đánh giá."""
