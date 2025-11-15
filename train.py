@@ -37,7 +37,7 @@ def main():
     # --- 4. Bắt đầu huấn luyện ---
     # total_timesteps: Tổng số bước (step) mà agent sẽ tương tác với môi trường.
     # 100,000 là một con số nhỏ để chạy thử, quá trình huấn luyện thực sự cần hàng triệu bước.
-    total_timesteps = 100_000 
+    total_timesteps = 1_000_000 
     print(f"\nBắt đầu huấn luyện với {total_timesteps} timesteps...")
     
     model.learn(
